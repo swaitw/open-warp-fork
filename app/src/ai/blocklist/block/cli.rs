@@ -45,11 +45,10 @@ use warpui::{
 use crate::ai::agent::{AIAgentPtyWriteMode, CancellationReason};
 use crate::ai::blocklist::block::view_impl::common::{
     render_query_text, UserQueryProps, BLOCKED_ACTION_MESSAGE_FOR_GREP_OR_FILE_GLOB,
-    BLOCKED_ACTION_MESSAGE_FOR_READING_FILES, BLOCKED_ACTION_MESSAGE_FOR_SEARCHING_CODEBASE,
+    BLOCKED_ACTION_MESSAGE_FOR_READING_FILES,
     BLOCKED_ACTION_MESSAGE_FOR_WRITE_TO_LONG_RUNNING_SHELL_COMMAND,
     LOAD_OUTPUT_MESSAGE_FOR_FILE_GLOB, LOAD_OUTPUT_MESSAGE_FOR_GREP,
-    LOAD_OUTPUT_MESSAGE_FOR_READING_FILES, LOAD_OUTPUT_MESSAGE_FOR_SEARCH_CODEBASE,
-    LOAD_OUTPUT_MESSAGE_FOR_WEB_SEARCH,
+    LOAD_OUTPUT_MESSAGE_FOR_READING_FILES, LOAD_OUTPUT_MESSAGE_FOR_WEB_SEARCH,
 };
 use crate::ai::blocklist::permissions::is_agent_mode_autonomy_allowed;
 use crate::ai::control_code_parser::{parse_control_codes_from_bytes, ParsedControlCodeOutput};
@@ -57,7 +56,7 @@ use crate::code::editor::view::{CodeEditorEvent, CodeEditorRenderOptions};
 use crate::menu::MenuItemFields;
 use crate::send_telemetry_from_ctx;
 use crate::server::telemetry::TelemetryEvent;
-use crate::settings::AISettings;
+use crate::settings::{AISettings, SelectionSettings};
 use crate::terminal::input::SET_INPUT_MODE_TERMINAL_ACTION_NAME;
 use crate::terminal::model::block::BlockId;
 use crate::terminal::{ShellLaunchData, TerminalModel};
@@ -357,7 +356,7 @@ impl CLISubagentView {
             move |me, _history_model, event, ctx| match event {
                 BlocklistAIHistoryEvent::UpgradedTask {
                     optimistic_id: old_id,
-                    server_id: new_id,
+                    confirmed_task_id: new_id,
                     ..
                 } if *old_id == task_id_clone => {
                     task_id_clone = new_id.clone();
@@ -655,8 +654,7 @@ impl CLISubagentView {
                 });
                 ctx.notify();
             }
-            AIAgentActionType::SearchCodebase(_)
-            | AIAgentActionType::ReadFiles(_)
+            AIAgentActionType::ReadFiles(_)
             | AIAgentActionType::Grep { .. }
             | AIAgentActionType::FileGlobV2 { .. } => {
                 if should_show_read_files_speedbump(ctx) {
@@ -817,7 +815,8 @@ impl CLISubagentView {
                 });
                 ctx.subscribe_to_view(&view, |me, view, event, ctx| match event {
                     CodeEditorEvent::SelectionChanged => {
-                        if view.as_ref(ctx).selected_text(ctx).is_some() {
+                        if let Some(selected_text) = view.as_ref(ctx).selected_text(ctx) {
+                            me.maybe_copy_on_select(selected_text, ctx);
                             me.clear_other_selections(Some(view.id()), ctx);
                             ctx.emit(CLISubagentViewEvent::TextSelected);
                         }
@@ -965,6 +964,12 @@ impl CLISubagentView {
             .or_else(|| self.selected_text.read().clone())
             .filter(|selection| !selection.is_empty())
     }
+
+    fn maybe_copy_on_select(&self, selection: String, ctx: &mut ViewContext<Self>) {
+        SelectionSettings::handle(ctx).update(ctx, |selection_settings, ctx| {
+            selection_settings.maybe_copy_on_select(ClipboardContent::plain_text(selection), ctx);
+        });
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1036,6 +1041,9 @@ impl View for CLISubagentView {
                         {
                             output_selection_handle.clear();
                             action_selection_handle.clear();
+                            ctx.dispatch_typed_action(CLISubagentAction::CopyOnSelect(
+                                selection.clone(),
+                            ));
                             *selected_text.write() = Some(selection);
                             ctx.dispatch_typed_action(CLISubagentAction::SelectText);
                         }
@@ -1277,6 +1285,9 @@ impl View for CLISubagentView {
                     {
                         query_selection_handle.clear();
                         action_selection_handle.clear();
+                        ctx.dispatch_typed_action(CLISubagentAction::CopyOnSelect(
+                            selection.clone(),
+                        ));
                         *selected_text.write() = Some(selection);
                         ctx.dispatch_typed_action(CLISubagentAction::SelectText);
                     }
@@ -1355,7 +1366,6 @@ impl View for CLISubagentView {
                 ))
             }
             AIAgentActionType::ReadFiles(..)
-            | AIAgentActionType::SearchCodebase(..)
             | AIAgentActionType::Grep { .. }
             | AIAgentActionType::FileGlobV2 { .. } => Some(render_blocked_action(
                 BlockedActionProps {
@@ -1396,6 +1406,9 @@ impl View for CLISubagentView {
                     {
                         query_selection_handle.clear();
                         output_selection_handle.clear();
+                        ctx.dispatch_typed_action(CLISubagentAction::CopyOnSelect(
+                            selection.clone(),
+                        ));
                         *selected_text.write() = Some(selection);
                         ctx.dispatch_typed_action(CLISubagentAction::SelectText);
                     }
@@ -1449,6 +1462,7 @@ pub enum CLISubagentAction {
     ToggleAlwaysAllowReadFiles,
     DismissInput,
     SelectText,
+    CopyOnSelect(String),
     CopyDebugId(String),
     OpenFeedbackDocs,
 }
@@ -1537,6 +1551,9 @@ impl TypedActionView for CLISubagentView {
                 ctx.focus_self();
                 ctx.emit(CLISubagentViewEvent::TextSelected);
             }
+            CLISubagentAction::CopyOnSelect(selection) => {
+                self.maybe_copy_on_select(selection.clone(), ctx);
+            }
             CLISubagentAction::CopyDebugId(debug_id) => {
                 ctx.clipboard()
                     .write(ClipboardContent::plain_text(debug_id.clone()));
@@ -1560,9 +1577,6 @@ fn should_show_read_files_speedbump(app: &AppContext) -> bool {
 
 fn get_action_loading_text(action: AIAgentActionType) -> Option<String> {
     match action {
-        AIAgentActionType::SearchCodebase(_) => {
-            Some(LOAD_OUTPUT_MESSAGE_FOR_SEARCH_CODEBASE.to_string())
-        }
         AIAgentActionType::ReadFiles(_) => Some(LOAD_OUTPUT_MESSAGE_FOR_READING_FILES.to_string()),
         AIAgentActionType::Grep { .. } => Some(LOAD_OUTPUT_MESSAGE_FOR_GREP.to_string()),
         AIAgentActionType::FileGlobV2 { .. } => Some(LOAD_OUTPUT_MESSAGE_FOR_FILE_GLOB.to_string()),
@@ -1572,8 +1586,7 @@ fn get_action_loading_text(action: AIAgentActionType) -> Option<String> {
 
 fn get_action_icon(action: AIAgentActionType) -> Option<Icon> {
     match action {
-        AIAgentActionType::SearchCodebase(_)
-        | AIAgentActionType::ReadFiles(_)
+        AIAgentActionType::ReadFiles(_)
         | AIAgentActionType::Grep { .. }
         | AIAgentActionType::FileGlobV2 { .. } => Some(Icon::Search),
         _ => None,
@@ -1924,9 +1937,6 @@ fn get_blocked_action_header(action: AIAgentActionType) -> Option<String> {
         AIAgentActionType::ReadFiles(..) => {
             Some(BLOCKED_ACTION_MESSAGE_FOR_READING_FILES.to_string())
         }
-        AIAgentActionType::SearchCodebase(..) => {
-            Some(BLOCKED_ACTION_MESSAGE_FOR_SEARCHING_CODEBASE.to_string())
-        }
         AIAgentActionType::Grep { .. } | AIAgentActionType::FileGlobV2 { .. } => {
             Some(BLOCKED_ACTION_MESSAGE_FOR_GREP_OR_FILE_GLOB.to_string())
         }
@@ -2014,10 +2024,6 @@ fn render_search_action_input(
             .map(|loc| loc.name.as_str())
             .collect::<Vec<_>>()
             .join("\n"),
-        AIAgentActionType::SearchCodebase(ref request) => {
-            let repo = request.codebase_path.as_deref()?;
-            repo.to_string()
-        }
         AIAgentActionType::Grep {
             ref queries,
             ref path,

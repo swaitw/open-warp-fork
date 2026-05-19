@@ -31,10 +31,9 @@ pub use localization::set_localizer;
 /// skip-login confirmation dialog so the two always stay in sync.
 pub const AI_FEATURES: &[&str] = &[
     "Warp agents",
-    "Oz cloud agents platform",
+    "Oz local agents platform",
     "Next command predictions",
     "Prompt suggestions",
-    "Codebase context",
     "Remote control with Claude Code, Codex, and other agents",
     "Agents over SSH",
 ];
@@ -44,13 +43,6 @@ pub const AI_FEATURES: &[&str] = &[
 /// skip-login confirmation dialog so the list stays in sync with any future
 /// surfaces that need it.
 pub const WARP_DRIVE_FEATURES: &[&str] = &["Warp Drive", "Session Sharing"];
-
-cfg_if::cfg_if! {
-    if #[cfg(feature = "bin")] {
-        mod telemetry_provider;
-        pub use telemetry_provider::MockTelemetryContextProvider;
-    }
-}
 
 pub mod components;
 mod visuals;
@@ -74,7 +66,7 @@ impl std::fmt::Display for SessionDefault {
 }
 
 pub use agent_onboarding_view::{AgentOnboardingAction, AgentOnboardingEvent, AgentOnboardingView};
-pub use model::{OnboardingAuthState, SelectedSettings, UICustomizationSettings};
+pub use model::{SelectedSettings, UICustomizationSettings};
 pub use slides::ProjectOnboardingSettings;
 pub use telemetry::OnboardingEvent;
 

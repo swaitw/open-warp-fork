@@ -4,7 +4,7 @@
 
 use anyhow::Result;
 use warp_core::{
-    channel::{Channel, ChannelConfig, ChannelState, OzConfig, WarpServerConfig},
+    channel::{Channel, ChannelConfig, ChannelState},
     features::{FeatureFlag, DEBUG_FLAGS},
     AppId,
 };
@@ -16,10 +16,6 @@ fn main() -> Result<()> {
         ChannelConfig {
             app_id: AppId::new("dev", "openwarp", "OpenWarp"),
             logfile_name: "openwarp.log".into(),
-            server_config: WarpServerConfig::disabled(),
-            oz_config: OzConfig::disabled(),
-            telemetry_config: None,
-            crash_reporting_config: None,
             autoupdate_config: None,
             mcp_static_config: None,
         },
@@ -56,6 +52,12 @@ embed_plist::embed_info_plist_bytes!(r#"
     <string>dev.openwarp.OpenWarp</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
+    <key>CFBundleLocalizations</key>
+    <array>
+    <string>en</string>
+    <string>ja</string>
+    <string>zh-CN</string>
+    </array>
     <key>CFBundleName</key>
     <string>OpenWarp</string>
     <key>CFBundlePackageType</key>

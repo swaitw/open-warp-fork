@@ -259,7 +259,7 @@ impl IntentionSlide {
                 localized("onboarding-ai-feature-warp-agents", "Warp agents"),
                 localized(
                     "onboarding-ai-feature-oz-cloud-agents-platform",
-                    "Oz cloud agents platform",
+                    "Oz local agents platform",
                 ),
                 localized(
                     "onboarding-ai-feature-next-command-predictions",
@@ -269,7 +269,6 @@ impl IntentionSlide {
                     "onboarding-ai-feature-prompt-suggestions",
                     "Prompt suggestions",
                 ),
-                localized("onboarding-ai-feature-codebase-context", "Codebase context"),
                 localized(
                     "onboarding-ai-feature-remote-control-agents",
                     "Remote control with Claude Code, Codex, and other agents",

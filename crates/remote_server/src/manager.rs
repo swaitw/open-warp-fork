@@ -22,7 +22,7 @@ use crate::HostId;
 use repo_metadata::RepoMetadataUpdate;
 use serde::Serialize;
 #[cfg(not(target_family = "wasm"))]
-use warp_core::channel::ChannelState;
+use warp_core::channel::{Channel, ChannelState};
 use warp_core::SessionId;
 #[cfg(not(target_family = "wasm"))]
 use warpui::r#async::FutureExt as _;
@@ -143,6 +143,18 @@ fn version_is_compatible(client: Option<&str>, server: &str) -> bool {
         (None, true) => true,
         (Some(_), true) | (None, false) => false,
     }
+}
+
+/// 是否应当对远端 `server_version` 强制做 tag 严格匹配。
+///
+/// 对于 [`Channel::Oss`](OpenWarp),源码本地构建没有
+/// `GIT_RELEASE_TAG`,但 SSH Extension 可能安装 latest release 的
+/// remote-server。若强制校验,客户端 `None` 与服务端非空 tag 会触发
+/// 删除、重装、再次不匹配的循环。release 构建通过版本化安装路径规避
+/// 旧二进制;本地构建继续跳过严格版本校验。
+#[cfg(not(target_family = "wasm"))]
+fn should_enforce_remote_version_check(channel: Channel) -> bool {
+    !matches!(channel, Channel::Oss)
 }
 
 /// Per-session connection state. Encodes which data is available at each
@@ -826,8 +838,13 @@ impl RemoteServerManager {
         // Version compatibility check. If the server reports a different release
         // tag than the client expects, the binary on disk is stale. Remove it so
         // the next reconnect (or explicit reconnect by the user) will reinstall.
+        //
+        // `Channel::Oss`(OpenWarp)下临时复用官方 release 二进制,客户端自己
+        // 没有 `GIT_RELEASE_TAG`,与服务器永远不匹配,故跳过严格校验。详见
+        // [`should_enforce_remote_version_check`] 的注释。
         let client_version = ChannelState::app_version();
-        if !version_is_compatible(client_version, &resp.server_version) {
+        let enforce_version_check = should_enforce_remote_version_check(ChannelState::channel());
+        if enforce_version_check && !version_is_compatible(client_version, &resp.server_version) {
             log::warn!(
                 "Remote server version mismatch for session {session_id:?}: \
                  client={client_version:?}, server={:?}. Removing stale binary.",
@@ -1587,3 +1604,7 @@ impl RemoteServerManager {
         }
     }
 }
+
+#[cfg(all(test, not(target_family = "wasm")))]
+#[path = "manager_tests.rs"]
+mod tests;

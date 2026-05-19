@@ -12,16 +12,16 @@ use crate::{
         model::{
             generic_string_model::{GenericStringModel, GenericStringObjectId, StringModel},
             json_model::{JsonModel, JsonSerializer},
-            persistence::CloudModel,
+            persistence::ObjectStoreModel,
         },
-        GenericCloudObject, GenericStringObjectFormat, GenericStringObjectUniqueKey,
-        JsonObjectType, Revision, ServerCloudObject,
+        GenericStoredObject, GenericStringObjectFormat, GenericStringObjectUniqueKey,
+        JsonObjectType,
     },
     drive::{
         items::{mcp_server::WarpDriveMCPServer, WarpDriveItem},
-        CloudObjectTypeAndId,
+        ObjectTypeAndId,
     },
-    server::{ids::SyncId, sync_queue::QueueItem},
+    server::ids::SyncId,
 };
 #[cfg(not(target_family = "wasm"))]
 use diesel::{QueryDsl, RunQueryDsl, SqliteConnection};
@@ -263,34 +263,34 @@ pub struct ServerSentEvents {
     pub headers: Vec<StaticHeader>,
 }
 
-pub type CloudMCPServer = GenericCloudObject<GenericStringObjectId, CloudMCPServerModel>;
-pub type CloudMCPServerModel = GenericStringModel<MCPServer, JsonSerializer>;
+pub type MCPServerObject = GenericStoredObject<GenericStringObjectId, MCPServerObjectModel>;
+pub type MCPServerObjectModel = GenericStringModel<MCPServer, JsonSerializer>;
 
-impl CloudMCPServer {
-    pub fn get_all(app: &AppContext) -> Vec<CloudMCPServer> {
-        CloudModel::as_ref(app)
-            .get_all_objects_of_type::<GenericStringObjectId, CloudMCPServerModel>()
+impl MCPServerObject {
+    pub fn get_all(app: &AppContext) -> Vec<MCPServerObject> {
+        ObjectStoreModel::as_ref(app)
+            .get_all_objects_of_type::<GenericStringObjectId, MCPServerObjectModel>()
             .cloned()
             .collect()
     }
 
-    pub fn get_by_id<'a>(sync_id: &'a SyncId, app: &'a AppContext) -> Option<&'a CloudMCPServer> {
-        CloudModel::as_ref(app)
-            .get_object_of_type::<GenericStringObjectId, CloudMCPServerModel>(sync_id)
+    pub fn get_by_id<'a>(sync_id: &'a SyncId, app: &'a AppContext) -> Option<&'a MCPServerObject> {
+        ObjectStoreModel::as_ref(app)
+            .get_object_of_type::<GenericStringObjectId, MCPServerObjectModel>(sync_id)
     }
 
     pub fn get_by_uuid<'a>(
         uuid: &'a uuid::Uuid,
         app: &'a AppContext,
-    ) -> Option<&'a CloudMCPServer> {
-        CloudModel::as_ref(app)
-            .get_all_objects_of_type::<GenericStringObjectId, CloudMCPServerModel>()
+    ) -> Option<&'a MCPServerObject> {
+        ObjectStoreModel::as_ref(app)
+            .get_all_objects_of_type::<GenericStringObjectId, MCPServerObjectModel>()
             .find(|server| server.model().string_model.uuid == *uuid)
     }
 }
 
 impl StringModel for MCPServer {
-    type CloudObjectType = CloudMCPServer;
+    type StoredObjectType = MCPServerObject;
 
     fn model_type_name(&self) -> &'static str {
         "MCP server"
@@ -316,25 +316,6 @@ impl StringModel for MCPServer {
         self.name.clone()
     }
 
-    fn update_object_queue_item(
-        &self,
-        revision_ts: Option<Revision>,
-        object: &Self::CloudObjectType,
-    ) -> Option<QueueItem> {
-        Some(QueueItem::UpdateMCPServer {
-            model: object.model().clone().into(),
-            id: object.id,
-            revision: revision_ts.or_else(|| object.metadata.revision.clone()),
-        })
-    }
-
-    fn new_from_server_update(&self, server_cloud_object: &ServerCloudObject) -> Option<Self> {
-        if let ServerCloudObject::MCPServer(server_mcp_server) = server_cloud_object {
-            return Some(server_mcp_server.model.clone().string_model);
-        }
-        None
-    }
-
     fn uniqueness_key(&self) -> Option<GenericStringObjectUniqueKey> {
         None
     }
@@ -347,10 +328,10 @@ impl StringModel for MCPServer {
         &self,
         id: SyncId,
         _appearance: &Appearance,
-        mcp_server: &CloudMCPServer,
+        mcp_server: &MCPServerObject,
     ) -> Option<Box<dyn WarpDriveItem>> {
         Some(Box::new(WarpDriveMCPServer::new(
-            CloudObjectTypeAndId::GenericStringObject {
+            ObjectTypeAndId::GenericStringObject {
                 object_type: GenericStringObjectFormat::Json(JsonObjectType::MCPServer),
                 id,
             },
@@ -697,7 +678,7 @@ pub enum Author {
 
 #[derive(Debug, Clone)]
 pub enum MCPServerUpdate {
-    CloudTemplate {
+    TemplateObject {
         publisher: Author,
         new_version_ts: i64,
         json_template: JsonTemplate,

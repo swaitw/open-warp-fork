@@ -64,10 +64,11 @@ use crate::{
 use crate::{
     ai::{
         agent::{
-            icons::red_stop_icon, AIAgentAction, AIAgentActionType, AIAgentInput,
-            AIAgentOutputMessageType, AIAgentTextSection, AgentOutputImage, AgentOutputImageLayout,
-            AgentOutputMermaidDiagram, AgentOutputTable, AgentOutputTableRendering,
-            ProgrammingLanguage, RenderableAIError, SummarizationType, WebSearchStatus,
+            icons::red_stop_icon, AIAgentAction, AIAgentActionType, AIAgentAttachment,
+            AIAgentInput, AIAgentOutputMessageType, AIAgentTextSection, AgentOutputImage,
+            AgentOutputImageLayout, AgentOutputMermaidDiagram, AgentOutputTable,
+            AgentOutputTableRendering, DriveObjectPayload, ProgrammingLanguage, RenderableAIError,
+            SummarizationType, WebSearchStatus,
         },
         blocklist::{
             block::{
@@ -92,7 +93,6 @@ use crate::{
             view_util::error_color,
             TextLocation,
         },
-        AIRequestUsageModel,
     },
     code::{editor::view::CodeEditorView, editor_management::CodeSource},
     notebooks::editor::{markdown_table_appearance, rich_text_styles},
@@ -139,7 +139,6 @@ pub const LOAD_OUTPUT_MESSAGE_FOR_UPDATING_PLAN: &str = "Updating plan...";
 pub const LOAD_OUTPUT_MESSAGE_FOR_SUMMARIZING_CONVERSATION: &str = "Summarizing conversation...";
 pub const LOAD_OUTPUT_MESSAGE_FOR_SUMMARIZING_TOOL_CALL_RESULT: &str =
     "Summarizing command output...";
-pub const LOAD_OUTPUT_MESSAGE_FOR_SEARCH_CODEBASE: &str = "Searching codebase...";
 pub const LOAD_OUTPUT_MESSAGE_FOR_READING_FILES: &str = "Reading files...";
 pub const LOAD_OUTPUT_MESSAGE_FOR_GREP: &str = "Grepping...";
 pub const LOAD_OUTPUT_MESSAGE_FOR_FILE_GLOB: &str = "Finding files...";
@@ -156,8 +155,6 @@ pub(crate) type ResolvedBlocklistImageSources = HashMap<String, Option<AssetSour
 pub const BLOCKED_ACTION_MESSAGE_FOR_WRITE_TO_LONG_RUNNING_SHELL_COMMAND: &str =
     "Can I write the following to this running command?";
 pub const BLOCKED_ACTION_MESSAGE_FOR_READING_FILES: &str = "Grant access to the following files?";
-pub const BLOCKED_ACTION_MESSAGE_FOR_SEARCHING_CODEBASE: &str =
-    "Grant access to the following repository?";
 pub const BLOCKED_ACTION_MESSAGE_FOR_GREP_OR_FILE_GLOB: &str =
     "OK if I search the files in this directory?";
 
@@ -349,9 +346,6 @@ pub fn render_warping_indicator<V: View>(
             .get_async_running_action(app)
             .map(|action| &action.action)
         {
-            Some(AIAgentActionType::SearchCodebase(..)) => {
-                LOAD_OUTPUT_MESSAGE_FOR_SEARCH_CODEBASE.to_owned()
-            }
             Some(AIAgentActionType::Grep { .. }) => LOAD_OUTPUT_MESSAGE_FOR_GREP.to_owned(),
             Some(AIAgentActionType::CallMCPTool { name, .. }) => {
                 format!("Calling \"{name}\" MCP tool...")
@@ -2953,15 +2947,9 @@ pub fn render_failed_output(props: FailedOutputProps, app: &AppContext) -> Box<d
 
     let error_text = match props.error {
         RenderableAIError::QuotaLimit => {
-            let ai_request_usage_model = AIRequestUsageModel::as_ref(app);
-            let formatted_next_refresh_time = ai_request_usage_model
-                .next_refresh_time()
-                .format("%B %d")
-                .to_string();
-
-            format!(
-                "{ERROR_APOLOGY_TEXT}\n\nYou've reached your credit limit. Your credit limit resets on {formatted_next_refresh_time}.",
-            )
+            // OpenWarp(Phase 3c A1):删除 QuotaLimit 中依赖 `AIRequestUsageModel`
+            // 渲染刷新时间的逻辑。本地化后云端额度不适用，仅保留通用错误文案。
+            format!("{ERROR_APOLOGY_TEXT}\n\n{INTERNAL_WARP_ERROR}")
         }
         RenderableAIError::ServerOverloaded => {
             "Warp is currently overloaded. Please try again later.".to_string()
@@ -3414,14 +3402,19 @@ pub struct UserQueryProps<'a> {
     pub find_context: Option<FindContext<'a>>,
     pub font_properties: &'a Properties,
 }
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct QueryContextReference {
+    pub(crate) label: String,
+    pub(crate) icon: Icon,
+}
+
 pub(super) fn query_prefix_highlight_len(
     input: &AIAgentInput,
     displayed_query: &str,
 ) -> Option<usize> {
     if displayed_query.starts_with(commands::PLAN.name) {
         Some(commands::PLAN.name.len())
-    } else if displayed_query.starts_with(commands::CREATE_ENVIRONMENT.name) {
-        Some(commands::CREATE_ENVIRONMENT.name.len())
     } else if displayed_query.starts_with(commands::AGENT.name) {
         Some(commands::AGENT.name.len())
     } else if displayed_query.starts_with(commands::NEW.name) {
@@ -3433,7 +3426,6 @@ pub(super) fn query_prefix_highlight_len(
             | AIAgentInput::AutoCodeDiffQuery { .. }
             | AIAgentInput::ResumeConversation { .. }
             | AIAgentInput::InitProjectRules { .. }
-            | AIAgentInput::CreateEnvironment { .. }
             | AIAgentInput::TriggerPassiveSuggestion { .. }
             | AIAgentInput::CreateNewProject { .. }
             | AIAgentInput::CloneRepository { .. }
@@ -3447,6 +3439,104 @@ pub(super) fn query_prefix_highlight_len(
             | AIAgentInput::PassiveSuggestionResult { .. } => None,
         }
     }
+}
+
+pub(super) fn query_context_references(
+    input: &AIAgentInput,
+    displayed_query: &str,
+) -> Vec<QueryContextReference> {
+    let referenced_attachments = match input {
+        AIAgentInput::UserQuery {
+            referenced_attachments,
+            ..
+        } => referenced_attachments,
+        AIAgentInput::InvokeSkill {
+            user_query: Some(user_query),
+            ..
+        } => &user_query.referenced_attachments,
+        AIAgentInput::AutoCodeDiffQuery { .. }
+        | AIAgentInput::ActionResult { .. }
+        | AIAgentInput::ResumeConversation { .. }
+        | AIAgentInput::InitProjectRules { .. }
+        | AIAgentInput::TriggerPassiveSuggestion { .. }
+        | AIAgentInput::CreateNewProject { .. }
+        | AIAgentInput::CloneRepository { .. }
+        | AIAgentInput::CodeReview { .. }
+        | AIAgentInput::FetchReviewComments { .. }
+        | AIAgentInput::SummarizeConversation { .. }
+        | AIAgentInput::StartFromAmbientRunPrompt { .. }
+        | AIAgentInput::MessagesReceivedFromAgents { .. }
+        | AIAgentInput::EventsFromAgents { .. }
+        | AIAgentInput::PassiveSuggestionResult { .. }
+        | AIAgentInput::InvokeSkill {
+            user_query: None, ..
+        } => return vec![],
+    };
+
+    let mut references = referenced_attachments
+        .iter()
+        .filter(|(reference, _)| reference.starts_with('@') && displayed_query.contains(*reference))
+        .map(|(reference, attachment)| QueryContextReference {
+            label: reference.clone(),
+            icon: context_reference_icon(attachment),
+        })
+        .collect_vec();
+    references.sort_by(|left, right| left.label.cmp(&right.label));
+    references
+}
+
+fn context_reference_icon(attachment: &AIAgentAttachment) -> Icon {
+    match attachment {
+        AIAgentAttachment::DriveObject {
+            payload:
+                Some(DriveObjectPayload::Workflow {
+                    name: _,
+                    description: _,
+                    command: _,
+                }),
+            ..
+        } => Icon::Workflow,
+        AIAgentAttachment::DriveObject {
+            payload:
+                Some(DriveObjectPayload::Notebook {
+                    title: _,
+                    content: _,
+                }),
+            ..
+        } => Icon::Notebook,
+        AIAgentAttachment::DocumentContent { .. } => Icon::Notebook,
+        AIAgentAttachment::FilePathReference { .. } => Icon::File,
+        AIAgentAttachment::Block(_) => Icon::Terminal,
+        AIAgentAttachment::DiffHunk { .. } | AIAgentAttachment::DiffSet { .. } => Icon::Diff,
+        AIAgentAttachment::PlainText(_)
+        | AIAgentAttachment::DriveObject {
+            payload:
+                Some(DriveObjectPayload::GenericStringObject {
+                    payload: _,
+                    object_type: _,
+                })
+                | None,
+            ..
+        } => Icon::AtSign,
+    }
+}
+
+pub(super) fn display_query_without_context_references(
+    displayed_query: &str,
+    context_references: &[QueryContextReference],
+) -> String {
+    let mut query = displayed_query.to_string();
+    let mut reference_labels = context_references
+        .iter()
+        .map(|reference| reference.label.as_str())
+        .collect_vec();
+    reference_labels.sort_by_key(|label| std::cmp::Reverse(label.len()));
+
+    for reference in reference_labels {
+        query = query.replace(reference, " ");
+    }
+
+    query.split_whitespace().join(" ")
 }
 
 /// Renders query text with all interactive features: link detection, secret redaction, and highlights.
@@ -3508,7 +3598,7 @@ pub fn render_query_text(props: UserQueryProps<'_>, app: &AppContext) -> Text {
 /// Renders a scrollable collapsible content area with auto-scroll-to-bottom
 /// during streaming. Returns `None` if the state is collapsed.
 ///
-/// Shared by reasoning/summarization blocks and orchestration blocks.
+/// Shared by reasoning/summarization blocks and structured event blocks.
 pub(crate) fn render_scrollable_collapsible_content(
     message_id: &MessageId,
     state: &CollapsibleElementState,

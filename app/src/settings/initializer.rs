@@ -5,7 +5,7 @@ use warpui::{Entity, ModelContext, SingletonEntity};
 
 use crate::settings::{AISettings, FontSettings, ThinkingDisplayMode};
 use crate::{
-    auth::auth_state::AuthState,
+    auth::AuthState,
     report_if_error,
     settings::input::InputBoxType,
     settings::{InputSettings, PrivacySettings, ThemeSettings},
@@ -176,5 +176,5 @@ impl Entity for SettingsInitializer {
     type Event = ();
 }
 
-/// Mark CloudPreferencesSyncer as global application state.
+/// Mark PreferencesSyncer as global application state.
 impl SingletonEntity for SettingsInitializer {}
